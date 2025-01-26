@@ -21,60 +21,6 @@
 
 ;; https://github.com/positron-solutions/transient-showcase?tab=readme-ov-file#Prefixes-and-Suffixes
 
-
-;; infix defined with a macro
-(transient-define-argument tsc--exclusive-switches ()
-  "This is a specialized infix for only selecting one of several values."
-  :class 'transient-switches
-  :argument-format "--%s-snowcone"
-  :argument-regexp "\\(--\\(grape\\|orange\\|cherry\\|lime\\)-snowcone\\)"
-  :choices '("grape" "orange" "cherry" "lime"))
-
-(transient-define-prefix tsc-basic-infixes ()
-  "Prefix that just shows off many typical infix types."
-  ["Infixes"
-
-   ;; from macro
-   ("-e" "exclusive switches" tsc--exclusive-switches)
-
-   ;; shorthand definitions
-   ("-b" "switch with shortarg" ("-w" "--switch-short"))
-   ;; note :short-arg != :key
-
-   ("-s" "switch" "--switch")
-   ( "n" "no dash switch" "still works")
-   ("-a" "argument" "--argument=" :prompt "Let's argue because: ")
-
-   ;; a bit of inline EIEIO in our shorthand
-   ("-n" "never empty" "--non-null=" :always-read t  :allow-empty nil
-    :init-value (lambda (obj) (oset obj value "better-than-nothing")))
-
-   ("-c" "choices" "--choice=" :choices (foo bar baz))]
-
-  ["Show Args"
-   ("s" "show arguments" tsc-suffix-print-args)])
-(tsc-basic-infixes)
-
-;; (tsc-basic-infixes)
-
-
-
-(transient-define-prefix dotnet-new-transient ()
-  "Placeholder"
-  [])
-
-;; (transient-parse-suffix)
-;; (transient-define-prefix dotnet-new-transient ()
-;;   "dotnet new"
-;;   ["Common Arguments"
-;;    ("n" "Name" "--name=")
-;;    ("o" "Output" "--output=")
-;;    ]
-;;   ["Section"
-;;    ()]
-;;   ["Misc"
-;;    ("q" "quit" transient-quit-all)])
-;;
 (defvar dotnet-new-test-to "Template options:
   -f, --framework <choice>   The target framework for the project.
                              Type: choice
@@ -147,38 +93,15 @@ Template options:
 
 ")
 
-(substring dotnet-new-test-help (s-index-of "Template options:" dotnet-new-test-help))
-;; types: bool, choice, text
-;; desc, type, default
-;; choice fmt:
-;; choice desc
-;; choice desc
-(let* ((topts (substring dotnet-new-test-help (s-index-of "Template options:" dotnet-new-test-help)))
-       (lines (s-lines topts))
-       (opt '()))
-  ;; (s-match-strings-all "-" topts)
-  ;; (s-match-strings-all "\\(-[alpha]\\),*[[space]]*\" topts)
-  ;; (s-match-strings-all "\\(-[alpha]\\)?,?[[space]]*\\(--\\)?" topts)
-  (s-match-strings-all "\\(-^[space]+\\)" topts)
-  )
-
-(s-match "\\(-[[:blank:]]+\\)" " - f")
-(s-match "[[:blank:]]\\(-[^,^[:blank:]]+\\),?[[:space:]]+\\(--[^[:blank:]]+\\)[[:space:]]*\\(.*\\)?" " -f, --framework description\nmoar")
-(s-match-strings-all "\\([[:blank:]]-[^,^[:blank:]]+\\),?[[:space:]]?\\(--[^[:blank:]]+\\)[[:space:]]*\\(.*\\)?" (s-replace "\n" " " dotnet-new-test-help))
-;; (s-match "\\([[:blank:]]-[^,^[:blank:]]+\\),?[[:space:]]?\\(--[^[:blank:]]+\\)[[:space:]]*\\(.*\\)?" " -f, --framework description\nmoar") ; works until newline
-;; (s-match "\\([[:blank:]]-[^,^[:blank:]]+\\),?[[:space:]]?\\(--[^[:blank:]]+\\)[[:space:]]*\\(^#*\\)" " -f, --framework")
-;; (s-match "\\([[:blank]]-[^,^[:blank:]]+\\),?[[:space:]]?\\(--[^[:blank:]]\\)[[:space:]]*\\(^\n\\)" " -f, --framework")
-;; ^[^#\r\n].*
-;; (while-let ((point (re-search-forward "\\([[:blank:]]-[^,^[:blank:]]+\\)?,?[[:space:]]*\\(--[^[:blank:]]+\\)?" nil t)))
-
 (cl-defstruct (dotnet-arg (:constructor dotnet-arg-create)
                           (:copier dotnet-arg-copy))
   short long desc type default choices choice-descriptions)
 
-(defun dotnet-arg--get-shortcut (arg)
-  (car (s-match "[^-]" (dotnet-arg-short arg))))
+;; (defun dotnet-arg-has-choice-p (arg)
+;;   (dotnet-arg-choices arg))
 
-(defun dotnet-arg--)
+(defun dotnet-arg--get-shortcut (arg)
+  (car (s-match "-[^-]" (dotnet-arg-short arg))))
 
 (ert-deftest dotnet-arg--get-shortcut ()
   (should (string= "s" (dotnet-arg--get-shortcut dotnet-new-arg-test))))
@@ -194,153 +117,99 @@ Template options:
     )
   )
 
-(with-temp-buffer (insert dotnet-new-test-help)
-                  (search-backward "Template options:")
-                  (let ((matches '())
-                        (current (dotnet-arg-create)))
-                    (while-let ((point (re-search-forward "\\([[:blank:]]-+[^,^[:blank:]]+\\)" nil t)))
-                      (setf (dotnet-arg-short current) (s-trim-left (match-string 1)))
-                      ;; (setq current (plist-put current :short (s-trim-left (match-string 1))))
-                      (when-let ((long-match (s-match "\\(--+[^,^[:blank:]]+\\)" (thing-at-point 'line))))
-                        (setf (dotnet-arg-long current) (nth 1 long-match)))
-                      ;; (setq current (plist-put current :long (nth 1 long-match))))
-                      (re-search-forward "[[:space:]][[:space:]]+") ; columns are separated by 2+ spaces
-                      (let* ((begin (point))
-                             (type-pos (search-forward "Type: "))
-                             (type (buffer-substring-no-properties (point) (line-end-position)))
-                             (end (line-beginning-position))
-                             (desc (buffer-substring-no-properties begin end))
-                             (trimmed (s-join " " (--map (s-trim it) (--filter (not (s-blank? it)) (s-lines desc)))))
-                             (default-pos (search-forward "Default: "))
-                             (default-line-begin-pos (line-beginning-position))
-                             (default (buffer-substring-no-properties default-pos (line-end-position))))
-                        (setf (dotnet-arg-desc current) trimmed)
-                        (setf (dotnet-arg-type current) type)
-                        (setf (dotnet-arg-default current) default)
-                        ;; (setq current (plist-put current :desc trimmed))
-                        ;; (setq current (plist-put current :type type))
-                        ;; (setq current (plist-put current :default default))
-                        (when (string= "choice" type)
-                          (goto-char type-pos)
-                          (forward-line)
-                          (let ((choices '())
-                                (descriptions '()))
-                            (while (< (point) default-line-begin-pos)
-                              (re-search-forward "[[:blank:]]+\\([^[:blank:]]+\\)[[:blank:]]+\\(.*\\)")
-                              (unless (> (point) default-line-begin-pos)
-                                (push (match-string 1) choices)
-                                (push (match-string 2) descriptions))
-                              )
-                            (goto-char default-pos)
-                            (setf (dotnet-arg-choices current) choices)
-                            (setf (dotnet-arg-choice-descriptions current) descriptions)
-                            ;; (setq current (plist-put current :choices choices))
-                            ;; (setq current (plist-put current :choice-descriptions descriptions))
-                            )
-                          )
-                        ;; todo choices, default & val
-                        )
-                      ;; (push (or (match-string 1) (match-string 2)) matches)
-                      (push current matches)
-                      (setq current (dotnet-arg-create))
-                      )
-                    matches))
+;; TODO not working for all templates, but for some
+(defun dotnet-new--parse-help (STRING)
+  (with-temp-buffer (insert STRING)
+                    (goto-char (point-min))
+                    (search-forward "Template options:")
+                    (let ((matches '())
+                          (current (dotnet-arg-create)))
+                      (while-let ((point (re-search-forward "\\([[:blank:]]-+[^,^[:blank:]]+\\)" nil t)))
+                        (setf (dotnet-arg-short current) (s-trim-left (match-string 1)))
+                        (when-let ((long-match (s-match "\\(--+[^,^[:blank:]]+\\)" (thing-at-point 'line))))
+                          (setf (dotnet-arg-long current) (nth 1 long-match)))
+                        (re-search-forward "[[:space:]][[:space:]]+") ; columns are separated by 2+ spaces
+                        (let* ((begin (point))
+                               (type-pos (search-forward "Type: "))
+                               (type (buffer-substring-no-properties (point) (line-end-position)))
+                               (end (line-beginning-position))
+                               (desc (buffer-substring-no-properties begin end))
+                               (trimmed (s-join " " (--map (s-trim it) (--filter (not (s-blank? it)) (s-lines desc)))))
+                               (default-pos (search-forward "Default: "))
+                               (default-line-begin-pos (line-beginning-position))
+                               (default (buffer-substring-no-properties default-pos (line-end-position))))
+                          (setf (dotnet-arg-desc current) trimmed)
+                          (setf (dotnet-arg-type current) type)
+                          (setf (dotnet-arg-default current) default)
+                          (when (string= "choice" type)
+                            (goto-char type-pos)
+                            (forward-line)
+                            (let ((choices '())
+                                  (descriptions '()))
+                              (while (< (point) default-line-begin-pos)
+                                (re-search-forward "[[:blank:]]+\\([^[:blank:]]+\\)[[:blank:]]+\\(.*\\)")
+                                (unless (> (point) default-line-begin-pos)
+                                  (push (match-string 1) choices)
+                                  (push (match-string 2) descriptions)))
+                              (goto-char default-pos)
+                              (setf (dotnet-arg-choices current) choices)
+                              (setf (dotnet-arg-choice-descriptions current) descriptions))))
+                        (push current matches)
+                        (setq current (dotnet-arg-create)))
+                      matches)))
 
-"Whether to exclude launchSettings.json from the
-                             generated template. "
+(defun dotnet-arg--create-transient-arg (arg)
+  (let ((long-arg (concat (dotnet-arg-long arg) (unless (string= "bool" (dotnet-arg-type arg)) "="))))
+    (if (dotnet-arg-choices arg)
+        (transient-parse-suffix
+         'transient--prefix
+         `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) ,long-arg :choices ,(dotnet-arg-choices arg)))
+      (transient-parse-suffix
+       'transient--prefix
+       `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) ,long-arg)))))
 
-(s-match "\\([[:blank:]]-[^,^[:blank:]]+\\)?,?[[:space:]]+\\(--[^[:blank:]]+\\)?[[:space:]]*\\(.*\\)?"
-         "-f, --framework <choice>   The target framework for the project.")
 
-(s-match "[[:blank:]]\\(-[^,^[:blank:]]+\\),?[[:space:]]+\\(--[^[:blank:]]+\\)[[:space:]]*\\(.*\\)?" " -f, --framework description\nmoar")
-(let ((opts '()))
-  (when (re-search-forward "-+[[]]+"))
-
+(defvar dotnet-new--selected)
+;; invoke command ;; TODO don't need to dynamically generate new maps -> can do first completion and setup sub menu dynamically? How to get all args?
+(defun dotnet-new--invoke (&optional transient-params)
+  (interactive
+   (list (transient-args 'dotnet-new-transient4)))
+  ;; (message transient-params) (sleep-for 10)
+  ;; (message (s-concat "dotnet new " dotnet-new--selected (s-join " " transient-params))) (sleep-for 10)
+  (shell-command (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))
   )
-()
-)
-(while)
-;; Template options:
-;;   -f, --framework <choice>   The target framework for the project.
-;;                              Type: choice
-;;                                net9.0  Target net9.0
-;;                                net8.0  Target net8.0
-;;                              Default: net9.0
-;;   --exclude-launch-settings  Whether to exclude launchSettings.json from the
-;;                              generated template.
-;;                              Type: bool
-;;                              Default: false
-;;   --no-restore               If specified, skips the automatic restore of the
-;;                              project on create.
-;;                              Type: bool
-;;                              Default: false
-;;   --use-program-main         Whether to generate an explicit Program class and
-;;                              Main method instead of top-level statements.
-;;                              Type: bool
-;;                              Default: false
-;;   --aot                      Whether to enable the project for publishing as
-;;                              native AOT.
-;;                              Type: bool
-;;                              Default: false
-
-
-
 
 (when-let* (
             (candidates (--filter (not (s-blank? it)) (cddddr (s-lines (shell-command-to-string "dotnet new list | awk -F '[[:space:]][[:space:]]+' '{print $2}'")))))
             (selected (completing-read "Which template? " candidates nil t))
             (continue (not (s-blank? selected)))
-            (cmd-base (s-concat "dotnet new " selected))
-            (cmd-help (shell-command-to-string (concat cmd-base " --help")))
+            (prefix-name (intern (concat "dotnet-new-" selected)))
             )
-  cmd-help
-
-  (transient-define-prefix dotnet-new-transient ()
-    "dotnet new"
-    ["Common Arguments"
-     ("n" "Name" "--name=")
-     ("o" "Output" "--output=")
-     ]
-    [:description (lambda () selected)
-     :setup-children
-     (lambda (_) ; we don't care about the suffix
-
-       ;; remember to return a list
-       (list (transient-parse-suffix
-              'transient--prefix
-              '("r" "replacement" (lambda ()
-                                    (interactive)
-                                    (message "okay!"))))))
-     ]
-    ["Misc"
-     ("q" "quit" transient-quit-all)])
-  (dotnet-new-transient)
+  (setq dotnet-new--selected selected)
+  (unless (transient-prefix-p prefix-name)
+    (let* ((cmd-base (s-concat "dotnet new " selected))
+           (cmd-help (shell-command-to-string (concat cmd-base " --help")))
+           (dotnet-args (dotnet-new--parse-help cmd-help)))
+      ;; TODO need the prefix name to be unique per template
+      (transient-define-prefix dotnet-new-transient4 ()
+        "dotnet new"
+        ["Common Arguments"
+         ("n" "Name" "--name=")
+         ("o" "Output" "--output=")
+         ("e" "Execute" dotnet-new--invoke)
+         ]
+        [:description (lambda () selected)
+         :setup-children
+         (lambda (_)
+           (mapcar #'dotnet-arg--create-transient-arg dotnet-args))
+         ]
+        ["Misc"
+         ("q" "quit" transient-quit-all)])
+      )
+    )
+  ;; (prefix-name)
   )
 ;; standard options -n name -o output --force --project
 
 (provide 'dotnet-new)
 ;;; dotnet-new.el ends here
-
-(transient-define-prefix dotnet-new-transient ()
-  "dotnet new"
-  ["Common Arguments"
-   ("n" "Name" "--name=")
-   ("o" "Output" "--output=")
-   ]
-  [
-   :description "desc"
-   ;; :description (lambda () selected)
-   :setup-children
-   (lambda (_)
-     (let ((args `(,dotnet-new-arg-test ,dotnet-new-arg-test)))
-       (mapcar (lambda (arg) (transient-parse-suffix
-                              'transient--prefix
-                              `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) (lambda ()
-                                                                                         (interactive)
-                                                                                         (message "okay!"))))) args)
-       ))
-
-   ]
-  ["Misc"
-   ("q" "quit" transient-quit-all)])
-(dotnet-new-transient)
