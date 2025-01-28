@@ -21,6 +21,8 @@
 
 ;; https://github.com/positron-solutions/transient-showcase?tab=readme-ov-file#Prefixes-and-Suffixes
 
+;; TODO having an issue where transient opens new windows when returning to the prefix. Found out this is a doom thing, waiting on fix
+;; (map! "C-c C-p" #'dotnet-new)
 (defvar dotnet-new-test-to "Template options:
   -f, --framework <choice>   The target framework for the project.
                              Type: choice
@@ -95,13 +97,10 @@ Template options:
 
 (cl-defstruct (dotnet-arg (:constructor dotnet-arg-create)
                           (:copier dotnet-arg-copy))
-  short long desc type default choices choice-descriptions)
+  arg short long desc type default choices choice-descriptions)
 
-;; (defun dotnet-arg-has-choice-p (arg)
-;;   (dotnet-arg-choices arg))
-
-(defun dotnet-arg--get-shortcut (arg)
-  (car (s-match "-[^-]" (dotnet-arg-short arg))))
+(defun dotnet-arg--get-shortcut (arg &optional count)
+  (car (s-match (concat "-[^-]\\{" (if count (if (stringp count) count (number-to-string count)) "1") "\\}") (dotnet-arg-short arg))))
 
 (ert-deftest dotnet-arg--get-shortcut ()
   (should (string= "s" (dotnet-arg--get-shortcut dotnet-new-arg-test))))
@@ -113,18 +112,15 @@ Template options:
                            'transient--prefix
                            `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) (lambda ()
                                                                                       (interactive)
-                                                                                      (message "okay!"))))) args)
-    )
-  )
+                                                                                      (message "okay!"))))) args)))
 
-;; TODO not working for all templates, but for some
 (defun dotnet-new--parse-help (STRING)
   (with-temp-buffer (insert STRING)
                     (goto-char (point-min))
                     (search-forward "Template options:")
                     (let ((matches '())
                           (current (dotnet-arg-create)))
-                      (while-let ((point (re-search-forward "\\([[:blank:]]-+[^,^[:blank:]]+\\)" nil t)))
+                      (while-let ((point (re-search-forward "^[[:blank:]]*\\([[:blank:]]-+[^,^[:blank:]]+\\)" nil t)))
                         (setf (dotnet-arg-short current) (s-trim-left (match-string 1)))
                         (when-let ((long-match (s-match "\\(--+[^,^[:blank:]]+\\)" (thing-at-point 'line))))
                           (setf (dotnet-arg-long current) (nth 1 long-match)))
@@ -163,53 +159,60 @@ Template options:
     (if (dotnet-arg-choices arg)
         (transient-parse-suffix
          'transient--prefix
-         `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) ,long-arg :choices ,(dotnet-arg-choices arg)))
+         `(,(dotnet-arg-arg arg) ,(dotnet-arg-desc arg) ,long-arg :choices ,(dotnet-arg-choices arg)))
       (transient-parse-suffix
        'transient--prefix
-       `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) ,long-arg)))))
+       `(,(dotnet-arg-arg arg) ,(dotnet-arg-desc arg) ,long-arg)))))
 
+(defun dotnet-arg--create-transient-args (dotnet-args)
+  (dolist (arg dotnet-args)
+    (setf (dotnet-arg-arg arg) (dotnet-arg--get-shortcut arg)))
+  (dotimes (i (length dotnet-args))
+    (dotimes (j (length dotnet-args))
+      (let ((ia (nth i dotnet-args))
+            (ja (nth j dotnet-args)))
+        (unless (eql i j)
+          (while (or (s-contains? (dotnet-arg-arg ia) (dotnet-arg-arg ja))
+                     (s-contains? (dotnet-arg-arg ja) (dotnet-arg-arg ia)))
+            (let ((l (+ 1 (max (length (dotnet-arg-arg ja)) (length (dotnet-arg-arg ia))))))
+              (setf (dotnet-arg-arg ia) (dotnet-arg--get-shortcut ia l) (dotnet-arg-arg ja) (dotnet-arg--get-shortcut ja l))))))))
+  (mapcar #'dotnet-arg--create-transient-arg dotnet-args))
 
 (defvar dotnet-new--selected)
-;; invoke command ;; TODO don't need to dynamically generate new maps -> can do first completion and setup sub menu dynamically? How to get all args?
 (defun dotnet-new--invoke (&optional transient-params)
   (interactive
-   (list (transient-args 'dotnet-new-transient4)))
-  ;; (message transient-params) (sleep-for 10)
-  ;; (message (s-concat "dotnet new " dotnet-new--selected (s-join " " transient-params))) (sleep-for 10)
-  (shell-command (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))
-  )
+   (list (transient-args 'dotnet-new-transient)))
+  (shell-command (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params))))
 
-(when-let* (
-            (candidates (--filter (not (s-blank? it)) (cddddr (s-lines (shell-command-to-string "dotnet new list | awk -F '[[:space:]][[:space:]]+' '{print $2}'")))))
-            (selected (completing-read "Which template? " candidates nil t))
-            (continue (not (s-blank? selected)))
-            (prefix-name (intern (concat "dotnet-new-" selected)))
-            )
-  (setq dotnet-new--selected selected)
-  (unless (transient-prefix-p prefix-name)
+(defun dotnet-new ()
+  (interactive)
+  (when-let* ((candidates (--filter (not (s-blank? it)) (cddddr (s-lines (shell-command-to-string "dotnet new list | awk -F '[[:space:]][[:space:]]+' '{print $2}'")))))
+              (selected (completing-read "Which template? " candidates nil t))
+              (continue (not (s-blank? selected))))
     (let* ((cmd-base (s-concat "dotnet new " selected))
            (cmd-help (shell-command-to-string (concat cmd-base " --help")))
            (dotnet-args (dotnet-new--parse-help cmd-help)))
-      ;; TODO need the prefix name to be unique per template
-      (transient-define-prefix dotnet-new-transient4 ()
-        "dotnet new"
+      (setq dotnet-new--selected selected)
+      (transient-define-prefix dotnet-new-transient ()
+        "Transient CLI dispatcher for the last template selected with M-x `dotnet-new'"
+        ["Selected Template:"
+         (:info (lambda () (upcase selected)))]
         ["Common Arguments"
          ("n" "Name" "--name=")
          ("o" "Output" "--output=")
+         ("d" "Dry run" "--dry-run")
+         ("f" "Force" "--force")
+         ("u" "No update check" "--no-update-check")
+         ("p" "Project" "--project")
+         ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
+         ("t" "Type" "--type=")]
+        ["Template Arguments"
+         :class transient-column
+         :setup-children (lambda (_) (dotnet-arg--create-transient-args dotnet-args))]
+        ["Finalize"
          ("e" "Execute" dotnet-new--invoke)
-         ]
-        [:description (lambda () selected)
-         :setup-children
-         (lambda (_)
-           (mapcar #'dotnet-arg--create-transient-arg dotnet-args))
-         ]
-        ["Misc"
-         ("q" "quit" transient-quit-all)])
-      )
-    )
-  ;; (prefix-name)
-  )
-;; standard options -n name -o output --force --project
+         ("q" "Quit" transient-quit-all)]))
+    (dotnet-new-transient)))
 
 (provide 'dotnet-new)
 ;;; dotnet-new.el ends here
