@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
 ;; Homepage: https://github.com/lillenne/dotnet-new
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "29.1") (s "1.10"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -21,98 +21,19 @@
 
 ;; https://github.com/positron-solutions/transient-showcase?tab=readme-ov-file#Prefixes-and-Suffixes
 
+(require 'transient)
+(require 's)
 ;; TODO having an issue where transient opens new windows when returning to the prefix. Found out this is a doom thing, waiting on fix
 ;; (map! "C-c C-p" #'dotnet-new)
-(defvar dotnet-new-test-to "Template options:
-  -f, --framework <choice>   The target framework for the project.
-                             Type: choice
-                               net9.0  Target net9.0
-                               net8.0  Target net8.0
-                             Default: net9.0
-  --exclude-launch-settings  Whether to exclude launchSettings.json from the
-                             generated template.
-                             Type: bool
-                             Default: false
-  --no-restore               If specified, skips the automatic restore of the
-                             project on create.
-                             Type: bool
-                             Default: false
-  --use-program-main         Whether to generate an explicit Program class and
-                             Main method instead of top-level statements.
-                             Type: bool
-                             Default: false
-  --aot                      Whether to enable the project for publishing as
-                             native AOT.
-                             Type: bool
-                             Default: false")
-(defvar dotnet-new-test-help
-  "
-ASP.NET Core gRPC Service (C#)
-Author: Microsoft
-Description: A project template for creating a gRPC service using ASP.NET Core, with optional support for publishing as native AOT.
-
-Usage:
-  dotnet new grpc [options] [template options]
-
-Options:
-  -n, --name <name>       The name for the output being created. If no name is
-                          specified, the name of the output directory is used.
-  -o, --output <output>   Location to place the generated output.
-  --dry-run               Displays a summary of what would happen if the given
-                          command line were run if it would result in a
-                          template creation.
-  --force                 Forces content to be generated even if it would
-                          change existing files.
-  --no-update-check       Disables checking for the template package updates
-                          when instantiating a template.
-  --project <project>     The project that should be used for context
-                          evaluation.
-  -lang, --language <C#>  Specifies the template language to instantiate.
-  --type <project>        Specifies the template type to instantiate.
-
-Template options:
-  -f, --framework <choice>   The target framework for the project.
-                             Type: choice
-                               net9.0  Target net9.0
-                               net8.0  Target net8.0
-                             Default: net9.0
-  --exclude-launch-settings  Whether to exclude launchSettings.json from the
-                             generated template.
-                             Type: bool
-                             Default: false
-  --no-restore               If specified, skips the automatic restore of the
-                             project on create.
-                             Type: bool
-                             Default: false
-  --use-program-main         Whether to generate an explicit Program class and
-                             Main method instead of top-level statements.
-                             Type: bool
-                             Default: false
-  --aot                      Whether to enable the project for publishing as
-                             native AOT.
-                             Type: bool
-                             Default: false
-
-")
 
 (cl-defstruct (dotnet-arg (:constructor dotnet-arg-create)
                           (:copier dotnet-arg-copy))
   arg short long desc type default choices choice-descriptions)
 
+(defvar dotnet-new--selected "The last selected dotnet template.")
+
 (defun dotnet-arg--get-shortcut (arg &optional count)
   (car (s-match (concat "-[^-]\\{" (if count (if (stringp count) count (number-to-string count)) "1") "\\}") (dotnet-arg-short arg))))
-
-(ert-deftest dotnet-arg--get-shortcut ()
-  (should (string= "s" (dotnet-arg--get-shortcut dotnet-new-arg-test))))
-
-(defvar dotnet-new-arg-test (dotnet-arg-create :short "-s" :long "--slong" :desc "Description" :type "choice" :default "net9.0" :choices '("net8.0" "net9.0") :choice-descriptions '("target net8" "target net9")))
-(ert-deftest dotnet-new--test ()
-  (let ((args `(,dotnet-new-arg-test ,dotnet-new-arg-test)))
-    (mapcar (lambda (arg) (transient-parse-suffix
-                           'transient--prefix
-                           `(,(dotnet-arg--get-shortcut arg) ,(dotnet-arg-desc arg) (lambda ()
-                                                                                      (interactive)
-                                                                                      (message "okay!"))))) args)))
 
 (defun dotnet-new--parse-help (STRING)
   (with-temp-buffer (insert STRING)
@@ -178,13 +99,19 @@ Template options:
               (setf (dotnet-arg-arg ia) (dotnet-arg--get-shortcut ia l) (dotnet-arg-arg ja) (dotnet-arg--get-shortcut ja l))))))))
   (mapcar #'dotnet-arg--create-transient-arg dotnet-args))
 
-(defvar dotnet-new--selected)
 (defun dotnet-new--invoke (&optional transient-params)
+  "Run command with `TRANSIENT-PARAMS' from the last `dotnet-new-transient'."
   (interactive
    (list (transient-args 'dotnet-new-transient)))
   (shell-command (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params))))
 
-(defun dotnet-new ()
+(transient-define-prefix dotnet-new-transient ()
+  "Transient CLI dispatcher for the last template selected with `dotnet-new'."
+  [])
+
+;;;###autoload
+(defun dotnet-new-dispatch ()
+  "Select a ~dotnet new~ template and invoke a transient interface for it."
   (interactive)
   (when-let* ((candidates (--filter (not (s-blank? it)) (cddddr (s-lines (shell-command-to-string "dotnet new list | awk -F '[[:space:]][[:space:]]+' '{print $2}'")))))
               (selected (completing-read "Which template? " candidates nil t))
@@ -203,7 +130,7 @@ Template options:
          ("d" "Dry run" "--dry-run")
          ("f" "Force" "--force")
          ("u" "No update check" "--no-update-check")
-         ("p" "Project" "--project")
+         ("p" "Project" "--project=")
          ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
          ("t" "Type" "--type=")]
         ["Template Arguments"
