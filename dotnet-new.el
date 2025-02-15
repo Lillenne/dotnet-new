@@ -23,9 +23,7 @@
 
 (require 'transient)
 (require 's)
-;; TODO having an issue where transient opens new windows when returning to the prefix. Found out this is a doom thing, waiting on fix
-;; (map! "C-c C-p" #'dotnet-new)
-
+(require 'dash)
 (cl-defstruct (dotnet-arg (:constructor dotnet-arg-create)
                           (:copier dotnet-arg-copy))
   arg short long desc type default choices choice-descriptions)
