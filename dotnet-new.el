@@ -31,7 +31,10 @@
 (defvar dotnet-new--selected "The last selected dotnet template.")
 
 (defun dotnet-arg--get-shortcut (arg &optional count)
-  (car (s-match (concat "-[^-]\\{" (if count (if (stringp count) count (number-to-string count)) "1") "\\}") (dotnet-arg-short arg))))
+  (let ((shortcut (car (s-match (concat "-[^-]\\{" (if count (if (stringp count) count (number-to-string count)) "1") "\\}") (dotnet-arg-short arg)))))
+    (if shortcut
+        shortcut
+      (dotnet-arg-long arg))))
 
 (defun dotnet-new--parse-help (STRING)
   (with-temp-buffer (insert STRING)
