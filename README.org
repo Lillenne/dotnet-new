@@ -1,0 +1,5 @@
+#+title: Readme
+#+OPTIONS: f:t
+
+Dotnet-new is an emacs extension which dynamically generates [[https://github.com/magit/transient][Transient]] interfaces for dispatching ~dotnet new~ cli commands.
+[[https://github.com/Lillenne/dotnet-new/blob/main/demo.gif]]
