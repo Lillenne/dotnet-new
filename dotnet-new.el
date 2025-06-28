@@ -2,14 +2,14 @@
 ;;
 ;; Copyright (C) 2025 Austin Kearns
 ;;
-;; Author: Austin Kearns <aus@dark>
-;; Maintainer: Austin Kearns <aus@dark>
+;; Author: Austin Kearns <59812315+Lillenne@users.noreply.github.com>
+;; Maintainer: Austin Kearns <59812315+Lillenne@users.noreply.github.com>
 ;; Created: January 25, 2025
 ;; Modified: January 25, 2025
 ;; Version: 0.0.1
 ;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
 ;; Homepage: https://github.com/lillenne/dotnet-new
-;; Package-Requires: ((emacs "29.1") (s "1.10") (dash "2.19.1"))
+;; Package-Requires: ((emacs "29.1") (s "1.10") (transient "0.2.0") (dash "2.19.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -18,8 +18,6 @@
 ;;  Completion for the dotnet cli "new" command
 ;;
 ;;; Code:
-
-;; https://github.com/positron-solutions/transient-showcase?tab=readme-ov-file#Prefixes-and-Suffixes
 
 (require 'transient)
 (require 's)
@@ -30,22 +28,39 @@
   "The number of spaces to insert for extra description lines.
 Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
 
+(defvar dotnet-new--candidates-cache nil "Cached list of dotnet template candidates.")
+(defvar dotnet-new--help-cache (make-hash-table :test 'equal) "Cache for parsed help data by template name.")
+
 (defun dotnet-new--get-candidates ()
-  (--filter (not (s-blank? it))
-            (mapcar (lambda (line) (let ((part (nth 1 (split-string line "\\s-\\{2,\\}"))))
-                                     (if (and part (s-contains? "," part))
-                                         (car (s-split "," part))
-                                       part)))
-                    (cddddr (s-lines (shell-command-to-string "dotnet new list"))))))
+  "Get list of dotnet template candidates, with caching."
+  (or dotnet-new--candidates-cache
+      (setq dotnet-new--candidates-cache
+            (--filter (not (s-blank? it))
+                      (mapcar (lambda (line) (let ((part (nth 1 (split-string line "\\s-\\{2,\\}"))))
+                                               (if (and part (s-contains? "," part))
+                                                   (car (s-split "," part))
+                                                 part)))
+                              (cddddr (s-lines (shell-command-to-string "dotnet new list"))))))))
+
+(defun dotnet-new--clear-candidates-cache ()
+  "Clear the candidates cache. Useful when templates are added/removed."
+  (interactive)
+  (setq dotnet-new--candidates-cache nil)
+  (message "Dotnet template candidates cache cleared"))
 
 (defun dotnet-new--get-help-command (selected)
-  (shell-command-to-string  (concat (s-concat "dotnet new " selected) " --help")))
+  (when (string-blank-p selected) (error "Selected command is blank!"))
+  (let ((help-cmd (shell-command-to-string (concat "dotnet new " selected " --help"))))
+    (if (string-blank-p help-cmd)
+        (error "Failed to get help! (%s)" help-cmd))
+    help-cmd))
 
 (cl-defstruct (dotnet-arg (:constructor dotnet-arg-create)
                           (:copier dotnet-arg-copy))
   arg short long desc type default choices choice-descriptions)
 
 (defvar dotnet-new--selected "The last selected dotnet template.")
+(defvar dotnet-new--current-args nil "Current parsed arguments for the selected template.")
 
 (defun dotnet-arg--get-shortcut (arg &optional count)
   (let ((shortcut (car (s-match (concat "-[^-]\\{" (if count (if (stringp count) count (number-to-string count)) "1") "\\}") (dotnet-arg-short arg)))))
@@ -54,6 +69,7 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
       (dotnet-arg-long arg))))
 
 (defun dotnet-new--parse-help (STRING)
+  "Parse help string into dotnet-arg structures."
   (unless (s-contains? "No options" STRING t)
     (with-temp-buffer (insert STRING)
                       (goto-char (point-min))
@@ -110,6 +126,20 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
                           (setq current (dotnet-arg-create)))
                         matches))))
 
+(defun dotnet-new--get-parsed-help-cached (template)
+  "Get parsed help for TEMPLATE, with caching."
+  (or (gethash template dotnet-new--help-cache)
+      (when-let ((cmd-help (dotnet-new--get-help-command template)))
+        (let ((parsed-args (dotnet-new--parse-help cmd-help)))
+          (puthash template parsed-args dotnet-new--help-cache)
+          parsed-args))))
+
+(defun dotnet-new--clear-help-cache ()
+  "Clear the help cache. Useful when template help might have changed."
+  (interactive)
+  (clrhash dotnet-new--help-cache)
+  (message "Dotnet template help cache cleared"))
+
 (defun dotnet-arg--create-transient-arg (arg)
   (let ((long-arg (concat (dotnet-arg-long arg) (unless (string= "bool" (dotnet-arg-type arg)) "="))))
     (if (dotnet-arg-choices arg)
@@ -140,40 +170,68 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    (list (transient-args 'dotnet-new-transient)))
   (shell-command (shell-quote-argument (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))))
 
+(defun dotnet-new--update-transient-layout ()
+  "Update the transient layout with current template arguments."
+  (let ((selected-info `(:info ,(lambda () (upcase (or dotnet-new--selected "No template selected")))))
+        (template-args (when dotnet-new--current-args
+                         (dotnet-arg--create-transient-args dotnet-new--current-args))))
+    (transient-define-prefix dotnet-new-transient ()
+      "Transient CLI dispatcher for dotnet new templates."
+      ["Selected Template:"
+       selected-info]
+      ["Common Arguments"
+       ("n" "Name" "--name=")
+       ("o" "Output" "--output=")
+       ("d" "Dry run" "--dry-run")
+       ("f" "Force" "--force")
+       ("u" "No update check" "--no-update-check")
+       ("p" "Project" "--project=")
+       ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
+       ("t" "Type" "--type=")]
+      ["Template Arguments"
+       :class transient-column
+       :setup-children (lambda (_) template-args)]
+      ["Actions"
+       ("s" "Select template" dotnet-new--select-template)
+       ("e" "Execute" dotnet-new--invoke)
+       ("q" "Quit" transient-quit-all)])))
+
+(defun dotnet-new--select-template ()
+  "Select a new template and update the transient."
+  (interactive)
+  (when-let* ((candidates (dotnet-new--get-candidates))
+              (selected (completing-read "Which template? " candidates nil t))
+              (continue (not (s-blank? selected))))
+    (setq dotnet-new--selected selected)
+    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))
+    (dotnet-new--update-transient-layout)
+    (transient-setup 'dotnet-new-transient)))
+
 (transient-define-prefix dotnet-new-transient ()
-  "Transient CLI dispatcher for the last template selected with `dotnet-new'."
-  [])
+  "Transient CLI dispatcher for dotnet new templates."
+  ["Selected Template:"
+   (:info "No template selected")]
+  ["Common Arguments"
+   ("n" "Name" "--name=")
+   ("o" "Output" "--output=")
+   ("d" "Dry run" "--dry-run")
+   ("f" "Force" "--force")
+   ("u" "No update check" "--no-update-check")
+   ("p" "Project" "--project=")
+   ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
+   ("t" "Type" "--type=")]
+  ["Template Arguments"
+   :class transient-column]
+  ["Actions"
+   ("s" "Select template" dotnet-new--select-template)
+   ("e" "Execute" dotnet-new--invoke)
+   ("q" "Quit" transient-quit-all)])
 
 ;;;###autoload
 (defun dotnet-new-dispatch ()
   "Select a ~dotnet new~ template and invoke a transient interface for it."
   (interactive)
-  (when-let* ((candidates (dotnet-new--get-candidates))
-              (selected (completing-read "Which template? " candidates nil t))
-              (continue (not (s-blank? selected))))
-    (let* ((cmd-help (dotnet-new--get-help-command selected))
-           (dotnet-args (dotnet-new--parse-help cmd-help)))
-      (setq dotnet-new--selected selected)
-      (transient-define-prefix dotnet-new-transient ()
-        "Transient CLI dispatcher for the last template selected with M-x `dotnet-new'"
-        ["Selected Template:"
-         (:info (lambda () (upcase selected)))]
-        ["Common Arguments"
-         ("n" "Name" "--name=")
-         ("o" "Output" "--output=")
-         ("d" "Dry run" "--dry-run")
-         ("f" "Force" "--force")
-         ("u" "No update check" "--no-update-check")
-         ("p" "Project" "--project=")
-         ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
-         ("t" "Type" "--type=")]
-        ["Template Arguments"
-         :class transient-column
-         :setup-children (lambda (_) (dotnet-arg--create-transient-args dotnet-args))]
-        ["Finalize"
-         ("e" "Execute" dotnet-new--invoke)
-         ("q" "Quit" transient-quit-all)]))
-    (dotnet-new-transient)))
+  (dotnet-new-transient))
 
 (provide 'dotnet-new)
 ;;; dotnet-new.el ends here
