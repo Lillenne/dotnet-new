@@ -44,6 +44,59 @@
                              Type: bool
                              Default: false")
 
+(defvar dotnet-new-gitignore-help
+  "dotnet gitignore file
+Author: Microsoft
+Description: Creates a gitignore file for a dotnet project.
+
+Usage:
+  dotnet new gitignore [options] [template options]
+  dotnet new .gitignore [options] [template options]
+
+Options:
+  -n, --name <name>      The name for the output being created. If no name is
+                         specified, the name of the output directory is used.
+  -o, --output <output>  Location to place the generated output.
+  --dry-run              Displays a summary of what would happen if the given
+                         command line were run if it would result in a template
+                         creation.
+  --force                Forces content to be generated even if it would change
+                         existing files.
+  --no-update-check      Disables checking for the template package updates
+                         when instantiating a template.
+  --project <project>    The project that should be used for context evaluation.
+  --type <item>          Specifies the template type to instantiate.
+
+Template options:
+   (No options)
+")
+
+(defvar dotnet-new-sln-help
+  "Solution File
+Author: Microsoft
+Description: Create an empty solution containing no projects
+
+Usage:
+  dotnet new sln [options] [template options]
+  dotnet new solution [options] [template options]
+
+Options:
+  -n, --name <name>      The name for the output being created. If no name is
+                         specified, the name of the output directory is used.
+  -o, --output <output>  Location to place the generated output.
+  --dry-run              Displays a summary of what would happen if the given
+                         command line were run if it would result in a template
+                         creation.
+  --force                Forces content to be generated even if it would change
+                         existing files.
+  --no-update-check      Disables checking for the template package updates
+                         when instantiating a template.
+  --project <project>    The project that should be used for context evaluation.
+
+Template options:
+   (No options)
+")
+
 (defvar dotnet-new-test-help
   "
 ASP.NET Core gRPC Service (C#)

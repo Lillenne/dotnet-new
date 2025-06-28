@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
 ;; Homepage: https://github.com/lillenne/dotnet-new
-;; Package-Requires: ((emacs "29.1") (s "1.10"))
+;; Package-Requires: ((emacs "29.1") (s "1.10") (dash "2.19.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -24,6 +24,18 @@
 (require 'transient)
 (require 's)
 (require 'dash)
+
+(defun dotnet-new--get-candidates ()
+  (--filter (not (s-blank? it))
+   (mapcar (lambda (line) (let ((part (nth 1 (split-string line "\\s-\\{2,\\}"))))
+                            (if (and part (s-contains? "," part))
+                                (car (s-split "," part))
+                            part)))
+           (cddddr (s-lines (shell-command-to-string "dotnet new list"))))))
+
+(defun dotnet-new--get-help-command (selected)
+  (shell-command-to-string  (concat (s-concat "dotnet new " selected) " --help")))
+
 (cl-defstruct (dotnet-arg (:constructor dotnet-arg-create)
                           (:copier dotnet-arg-copy))
   arg short long desc type default choices choice-descriptions)
@@ -104,7 +116,7 @@
   "Run command with `TRANSIENT-PARAMS' from the last `dotnet-new-transient'."
   (interactive
    (list (transient-args 'dotnet-new-transient)))
-  (shell-command (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params))))
+  (shell-command (shell-quote-argument (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))))
 
 (transient-define-prefix dotnet-new-transient ()
   "Transient CLI dispatcher for the last template selected with `dotnet-new'."
@@ -114,11 +126,10 @@
 (defun dotnet-new-dispatch ()
   "Select a ~dotnet new~ template and invoke a transient interface for it."
   (interactive)
-  (when-let* ((candidates (--filter (not (s-blank? it)) (cddddr (s-lines (shell-command-to-string "dotnet new list | awk -F '[[:space:]][[:space:]]+' '{print $2}'")))))
+  (when-let* ((candidates (dotnet-new--get-candidates))
               (selected (completing-read "Which template? " candidates nil t))
               (continue (not (s-blank? selected))))
-    (let* ((cmd-base (s-concat "dotnet new " selected))
-           (cmd-help (shell-command-to-string (concat cmd-base " --help")))
+    (let* ((cmd-help (dotnet-new--get-help-command selected))
            (dotnet-args (dotnet-new--parse-help cmd-help)))
       (setq dotnet-new--selected selected)
       (transient-define-prefix dotnet-new-transient ()
