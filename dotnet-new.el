@@ -23,7 +23,7 @@
 (require 's)
 (require 'dash)
 
-(defvar dotnet-new-max-chars 160 "Max chars for argument descriptions.")
+(defvar dotnet-new-max-chars 80 "Max chars for argument descriptions before wrap.")
 (defvar dotnet-new-extra-line-padding 10
   "The number of spaces to insert for extra description lines.
 Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
@@ -59,14 +59,18 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
                           (:copier dotnet-arg-copy))
   arg short long desc type default choices choice-descriptions)
 
-(defvar dotnet-new--selected "The last selected dotnet template.")
+(defvar dotnet-new--selected nil "The last selected template.")
 (defvar dotnet-new--current-args nil "Current parsed arguments for the selected template.")
 
 (defun dotnet-arg--get-shortcut (arg &optional count)
-  (let ((shortcut (car (s-match (concat "-[^-]\\{" (if count (if (stringp count) count (number-to-string count)) "1") "\\}") (dotnet-arg-short arg)))))
-    (if shortcut
-        shortcut
-      (dotnet-arg-long arg))))
+  (let ((shortcut (car (s-match (concat "-[^-]\\{" (if count
+                                                       (if (stringp count)
+                                                           count
+                                                         (number-to-string count))
+                                                     "1")
+                                        "\\}")
+                                (dotnet-arg-short arg)))))
+    (or shortcut (dotnet-arg-long arg))))
 
 (defun dotnet-new--parse-help (STRING)
   "Parse help string into dotnet-arg structures."
@@ -87,22 +91,6 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
                                  (end (line-beginning-position))
                                  (desc (buffer-substring-no-properties begin end))
                                  (trimmed (s-join " " (--map (s-trim it) (--filter (not (s-blank? it)) (s-lines desc)))))
-                                 (trimmed (if (> (length trimmed) dotnet-new-max-chars)
-                                              (let ((words (split-string trimmed))
-                                                    (lines '())
-                                                    (current-line ""))
-                                                (dolist (word words)
-                                                  (if (> (+ (length current-line) (length word) 1) dotnet-new-max-chars)
-                                                      (progn
-                                                        (push current-line lines)
-                                                        (setq current-line word))
-                                                    (setq current-line (if (string-empty-p current-line)
-                                                                           word
-                                                                         (concat current-line " " word)))))
-                                                (when (not (string-empty-p current-line))
-                                                  (push (concat (make-string dotnet-new-extra-line-padding ?\s) current-line) lines))
-                                                (string-join (reverse lines) "\n"))
-                                            trimmed))
                                  (before-default-pos (point))
                                  (default-pos (search-forward "Default: " (point-max) t))
                                  (default-line-begin-pos (when default-pos (line-beginning-position)))
@@ -114,18 +102,21 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
                             (when (string= "choice" type)
                               (goto-char type-pos)
                               (forward-line)
-                              (let ((choices '())
-                                    (descriptions '()))
-                                (while (and default-line-begin-pos (< (point) default-line-begin-pos))
-                                  (re-search-forward "[[:blank:]]+\\([^[:blank:]]+\\)[[:blank:]]+\\(.*\\)")
-                                  (unless (> (point) default-line-begin-pos)
-                                    (push (match-string 1) choices)
-                                    (push (match-string 2) descriptions)))
-                                (goto-char (or default-pos before-default-pos))
-                                (setf (dotnet-arg-choices current) choices)
-                                (setf (dotnet-arg-choice-descriptions current) descriptions))))
-                          (push current matches)
-                          (setq current (dotnet-arg-create)))
+                              (beginning-of-line)
+                              (when-let* ((numspace (length (car (s-match "[[:blank:]]+" (thing-at-point 'line)))))
+                                          (regex (format "[[:blank:]]\\{%d\\}\\([^[:blank:]]+\\)[[:blank:]]+\\([^\n]*\\)" numspace)))
+                                (let ((choices '())
+                                      (descriptions '()))
+                                  (while (and default-line-begin-pos
+                                              (< (point) default-line-begin-pos)
+                                              (re-search-forward regex nil t))
+                                    (push (match-string-no-properties 1) choices)
+                                    (push (match-string-no-properties 2) descriptions))
+                                  (goto-char (or default-pos before-default-pos))
+                                  (setf (dotnet-arg-choices current) choices)
+                                  (setf (dotnet-arg-choice-descriptions current) descriptions))))
+                            (push current matches)
+                            (setq current (dotnet-arg-create))))
                         matches))))
 
 (defun dotnet-new--get-parsed-help-cached (template)
@@ -142,7 +133,27 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
   (clrhash dotnet-new--help-cache)
   (message "Dotnet template help cache cleared"))
 
-(defun dotnet-arg--create-transient-arg (arg)
+(defun dotnet-arg--create-transient-arg (arg &optional padding)
+  (when (and (numberp padding) (> padding 0))
+    (let ((trimmed (dotnet-arg-desc arg)))
+      (when (> (length trimmed) dotnet-new-max-chars)
+        (let ((words (split-string trimmed))
+              (lines '())
+              (current-line ""))
+          (dolist (word words)
+            (if (> (+ (length current-line) (length word) 1) dotnet-new-max-chars)
+                (progn
+                  (push current-line lines)
+                  (setq current-line word))
+              (setq current-line (if (string-empty-p current-line)
+                                     word
+                                   (concat current-line " " word)))))
+          (when (not (string-empty-p current-line))
+            (push (concat (s-trim-left current-line)) lines))
+          ;; todo calculate padding based on longest arg
+          ;; (push (concat (make-string dotnet-new-extra-line-padding ?\s) current-line) lines))
+          ;; (setf (dotnet-arg-desc arg) (string-join (reverse lines) "\n"))
+          (setf (dotnet-arg-desc arg) (string-join (reverse lines) " "))))))
   (let ((long-arg (concat (dotnet-arg-long arg) (unless (string= "bool" (dotnet-arg-type arg)) "="))))
     (if (dotnet-arg-choices arg)
         (transient-parse-suffix
@@ -153,37 +164,94 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
        `(,(dotnet-arg-arg arg) ,(dotnet-arg-desc arg) ,long-arg)))))
 
 (defun dotnet-arg--create-transient-args (dotnet-args)
-
   ;; happening in blazorwasm template. TODO look into root cause
   (setq dotnet-args (cl-remove-duplicates dotnet-args :test
-    (lambda (a b)
-      (or (string= (dotnet-arg-short a) (dotnet-arg-short b))
-          (string= (dotnet-arg-long a) (dotnet-arg-long b))))))
+                                          (lambda (a b)
+                                            (or (string= (dotnet-arg-short a) (dotnet-arg-short b))
+                                                (string= (dotnet-arg-long a) (dotnet-arg-long b))))))
+  ;; trim prefixes from args
   (dolist (arg dotnet-args)
-    (setf (dotnet-arg-arg arg) (dotnet-arg--get-shortcut arg)))
-  (dotimes (i (length dotnet-args))
-    (dotimes (j (length dotnet-args))
-      (let ((ia (nth i dotnet-args))
-            (ja (nth j dotnet-args)))
-        (unless (eql i j)
-          ;; Handle contained arguments by capitalizing the longer one
-          (when (and (not (string= (dotnet-arg-arg ia) (dotnet-arg-arg ja)))
-                     (or (s-contains? (dotnet-arg-arg ia) (dotnet-arg-arg ja))
-                         (s-contains? (dotnet-arg-arg ja) (dotnet-arg-arg ia))))
-            (if (> (length (dotnet-arg-arg ia)) (length (dotnet-arg-arg ja)))
-                (setf (dotnet-arg-arg ia) (concat "-" (capitalize (substring (dotnet-arg-arg ia) 1))))
-              (setf (dotnet-arg-arg ja) (concat "-" (capitalize (substring (dotnet-arg-arg ja) 1))))))
-          ;; Prevent exact matches between arguments
-          (while (string= (dotnet-arg-arg ia) (dotnet-arg-arg ja))
-            (let ((l (+ 1 (max (length (dotnet-arg-arg ja)) (length (dotnet-arg-arg ia))))))
-              (setf (dotnet-arg-arg ia) (dotnet-arg--get-shortcut ia l) 
-                    (dotnet-arg-arg ja) (dotnet-arg--get-shortcut ja l))))))))
-  (mapcar #'dotnet-arg--create-transient-arg dotnet-args))
+    (setf (dotnet-arg-arg arg)
+          (s-chop-prefixes '("--" "-") (dotnet-arg-long arg))))
+
+  ;; identify flags which are not unique from the start of other prefixes
+  ;; e.g., --auth and --authority as separate flags
+  (let ((unique 0)) ; unique prefix counter
+    (dolist (arg dotnet-args)
+      (let ((flag (dotnet-arg-arg arg))
+            (collision nil)
+            (found nil))
+        (while (not found)
+          (dolist (arg2 dotnet-args)
+            (unless (eq arg arg2)
+              (let ((f2 (dotnet-arg-arg arg2)))
+                ;; no collision yet
+                (when (and (not collision)
+                           ;; and if the flag is a prefix of another arg or vice versa
+                           (or (s-starts-with? flag f2)
+                               (s-starts-with? f2 flag)))
+                  ;; then adjust the flag to be unique
+                  (setq flag (if (<= 1 (length flag))
+                                 ;; right shift the transient chars by 1 if possible
+                                 (substring flag 1 (length flag))
+                               (if (s-uppercase? flag)
+                                   ;; if it is already upcased, add a unique prefix
+                                   (concat (number-to-string (cl-incf unique)) flag)
+                                 ;; otherwise, upcase the flag to make it unique and try again
+                                 (upcase (dotnet-arg-arg arg))))
+                        collision t)))))
+          ;; after iterating through all args, if we found a collision we need to try again
+          (if collision
+              (setq collision nil)
+            ;; otherwise, we found a unique flag
+            (setq found t)
+            (setf (dotnet-arg-arg arg) flag))))))
+
+  ;; Try to shorten each arg name to shortest unique prefix
+  (dolist (arg dotnet-args)
+    (let* ((orig-flag (dotnet-arg-arg arg))
+           (shortest-flag orig-flag))
+
+      ;; Try all possible lengths from shortest to longest
+      (let ((done nil))
+        (dotimes (len (length orig-flag))
+          (unless done
+            (let* ((candidate (substring orig-flag 0 (1+ len)))
+                   (is-unique t))
+
+              ;; Check if this length is unique against all other args
+              (dolist (other-arg dotnet-args)
+                (unless (eq arg other-arg)
+                  (when (string-prefix-p candidate (dotnet-arg-arg other-arg))
+                    (setq is-unique nil))))
+
+              ;; If unique, this is our new shortest candidate
+              (when is-unique
+                (setq shortest-flag candidate)
+                ;; We found the shortest unique prefix, can stop checking
+                (setq done t))))))
+
+      ;; Update to the shortest unique version found
+      (setf (dotnet-arg-arg arg) shortest-flag)))
+
+  (let ((max-prefix-len 0))
+    (dolist (arg dotnet-args)
+      (unless (s-starts-with? "-" (dotnet-arg-arg arg))
+        (setf (dotnet-arg-arg arg) (concat "-" (dotnet-arg-arg arg))))
+      (setq max-prefix-len
+            (max max-prefix-len (length (dotnet-arg-arg arg)))))
+    ;; Create transient args for each dotnet-arg
+    (mapcar (lambda (arg) (dotnet-arg--create-transient-arg
+                           arg
+                           (max dotnet-new-extra-line-padding)))
+            dotnet-args)))
 
 (defun dotnet-new--invoke (&optional transient-params)
   "Run command with `TRANSIENT-PARAMS' from the last `dotnet-new-transient'."
   (interactive
    (list (transient-args 'dotnet-new-transient)))
+  (unless dotnet-new--selected
+    (error "No template selected! Please select a template first."))
   (shell-command (shell-quote-argument (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))))
 
 (defun dotnet-new--select-template ()
@@ -193,14 +261,58 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
               (selected (completing-read "Which template? " candidates nil t))
               (continue (not (s-blank? selected))))
     (setq dotnet-new--selected selected)
-    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))))
+    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))
+    (dotnet-new--update-transient-layout)
+    (transient-setup 'dotnet-new-transient)))
 
+(defun dotnet-new--update-transient-layout ()
+  "Update the transient layout with current template arguments."
+  (transient-define-prefix dotnet-new-transient ()
+    "Transient CLI dispatcher for dotnet new templates."
+    :refresh-suffixes t
+    ["Selected Template:"
+     (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
+    ["Common Arguments"
+     :pad-keys t
+     ("n" "Name" "--name=")
+     ("o" "Output" "--output=")
+     ("d" "Dry run" "--dry-run")
+     ("f" "Force" "--force")
+     ("u" "No update check" "--no-update-check")
+     ("p" "Project" "--project=")
+     ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
+     ("t" "Type" "--type=")]
+    ["Template Arguments"
+     :pad-keys t
+     :class transient-column
+     :setup-children (lambda (_) (when dotnet-new--current-args
+                                   (dotnet-arg--create-transient-args dotnet-new--current-args)))]
+    ["Actions"
+     :pad-keys t
+     ("s" "Select template" dotnet-new--select-template)
+     ("e" "Execute" dotnet-new--invoke)
+     ("q" "Quit" transient-quit-all)]))
+
+(defun dotnet-new--select-template ()
+  "Select a new template and update the transient."
+  (interactive)
+  (when-let* ((candidates (dotnet-new--get-candidates))
+              (selected (completing-read "Which template? " candidates nil t))
+              (continue (not (s-blank? selected))))
+    (setq dotnet-new--selected selected)
+    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))
+    (dotnet-new--update-transient-layout)
+    (transient-setup 'dotnet-new-transient)))
+
+
+;;;###autoload
 (transient-define-prefix dotnet-new-transient ()
   "Transient CLI dispatcher for dotnet new templates."
   :refresh-suffixes t
   ["Selected Template:"
    (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
   ["Common Arguments"
+   :pad-keys t
    ("n" "Name" "--name=")
    ("o" "Output" "--output=")
    ("d" "Dry run" "--dry-run")
@@ -210,14 +322,14 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
    ("t" "Type" "--type=")]
   ["Template Arguments"
-   :class transient-column
-   :setup-children (lambda (_) (or (dotnet-arg--create-transient-args dotnet-new--current-args) "No template selected"))]
+   :class transient-column]
   ["Actions"
+   :pad-keys t
    ("s" "Select template" dotnet-new--select-template :transient t)
    ("e" "Execute" dotnet-new--invoke)
    ("q" "Quit" transient-quit-all)])
 
-;;;###autoload
+ ;;;###autoload
 (defun dotnet-new-dispatch ()
   "Select a ~dotnet new~ template and invoke a transient interface for it."
   (interactive)

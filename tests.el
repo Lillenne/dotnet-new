@@ -182,10 +182,11 @@ Template options:
              ;; ((symbol-function 'dotnet-new--get-help-command)
              ;;  (lambda (template) (dotnet-new-test--mock-get-help template)))
              (templates (dotnet-new--get-candidates)))
-    
+
     (dolist (template templates)
-      (let* ((_ (message "Testing template: %s" template))
-             (help-text (dotnet-new--get-help-command template))
+      (condition-case err
+          (let* ((_ (message "Testing template: %s" template))
+                 (help-text (dotnet-new--get-help-command template))
 
              (parsed-args (dotnet-new--parse-help help-text))
              (dn-args (when parsed-args
@@ -213,7 +214,9 @@ Template options:
             (should targ)
             ;; (should (transient-argument-p targ)) ; not valid due to the way the transient args are created/parsed for setup_children.
             ))
-        ))))
+        )
+        (error 
+         (error "Template '%s' failed: %s" template (error-message-string err)))))))
 
 
 (provide 'tests)
