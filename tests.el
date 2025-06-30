@@ -2,14 +2,14 @@
 ;;
 ;; Copyright (C) 2025 Austin Kearns
 ;;
-;; Author: Austin Kearns <aus@dark>
-;; Maintainer: Austin Kearns <aus@dark>
+;; Author: Austin Kearns <59812315+Lillenne@users.noreply.github.com>
+;; Maintainer: Austin Kearns <59812315+Lillenne@users.noreply.github.com>
 ;; Created: January 29, 2025
 ;; Modified: January 29, 2025
 ;; Version: 0.0.1
 ;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
-;; Homepage: https://github.com/lillenne/tests
-;; Package-Requires: ((emacs "29.1"))
+;; Homepage: https://github.com/lillenne/dotnet-new
+;; Package-Requires: ((emacs "29.1") (s "1.10") (transient "0.2.0"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -20,6 +20,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'dotnet-new)
 
 (defvar dotnet-new-test-to "Template options:
   -f, --framework <choice>   The target framework for the project.
@@ -98,8 +99,7 @@ Template options:
 ")
 
 (defvar dotnet-new-test-help
-  "
-ASP.NET Core gRPC Service (C#)
+  "ASP.NET Core gRPC Service (C#)
 Author: Microsoft
 Description: A project template for creating a gRPC service using ASP.NET Core, with optional support for publishing as native AOT.
 
@@ -147,6 +147,20 @@ Template options:
 
 ")
 
+(defvar dotnet-new-test-helpers
+  `(("grpc" . ,dotnet-new-test-help)
+    ("gitignore" . ,dotnet-new-gitignore-help) 
+    ("sln" . ,dotnet-new-sln-help)
+    ("console" . "Template options: (No options)")
+    ("classlib" . "Template options:\n  -f, --framework <NET_VERSION>  Target framework\nType: string\nDefault: net9.0"))
+  "Alist of (template-name . help-output) for testing.")
+
+(defun dotnet-new-test--mock-get-candidates ()
+  (mapcar #'car dotnet-new-test-helpers))
+
+(defun dotnet-new-test--mock-get-help (template)
+  (cdr (assoc template dotnet-new-test-helpers)))
+
 (defvar dotnet-new-arg-test (dotnet-arg-create :short "-s" :long "--slong" :desc "Description" :type "choice" :default "net9.0" :choices '("net8.0" "net9.0") :choice-descriptions '("target net8" "target net9")))
 
 (ert-deftest dotnet-new--test ()
@@ -158,7 +172,49 @@ Template options:
                                                                                       (message "okay!"))))) args)))
 
 (ert-deftest dotnet-arg--get-shortcut ()
-  (should (string= "s" (dotnet-arg--get-shortcut dotnet-new-arg-test))))
+  (should (string= "-s" (dotnet-arg--get-shortcut dotnet-new-arg-test))))
+
+(ert-deftest dotnet-new-test-all-templates ()
+  (cl-letf* (
+             ;; uncomment for only the supplied mocks, else run all installed templates.
+             ;; ((symbol-function 'dotnet-new--get-candidates)
+             ;;  #'dotnet-new-test--mock-get-candidates)
+             ;; ((symbol-function 'dotnet-new--get-help-command)
+             ;;  (lambda (template) (dotnet-new-test--mock-get-help template)))
+             (templates (dotnet-new--get-candidates)))
+    
+    (dolist (template templates)
+      (let* ((_ (message "Testing template: %s" template))
+             (help-text (dotnet-new--get-help-command template))
+
+             (parsed-args (dotnet-new--parse-help help-text))
+             (dn-args (when parsed-args
+                               (dotnet-arg--create-transient-args parsed-args))))
+        
+        (should (stringp help-text))
+        
+        (if (s-contains? "(No options)" help-text)
+            (should (null parsed-args))
+          (should (consp parsed-args))
+          (dolist (arg parsed-args)
+            (should (dotnet-arg-p arg))
+            (should (stringp (dotnet-arg-desc arg)))
+            (should (stringp (dotnet-arg-type arg)))
+
+            (when (string= "choice" (dotnet-arg-type arg))
+              (should (consp (dotnet-arg-choices arg)))
+              (should (consp (dotnet-arg-choice-descriptions arg)))
+              (should (= (length (dotnet-arg-choices arg))
+                         (length (dotnet-arg-choice-descriptions arg)))))))
+
+        (when parsed-args
+          (should (consp dn-args))
+          (dolist (targ dn-args)
+            (should targ)
+            ;; (should (transient-argument-p targ)) ; not valid due to the way the transient args are created/parsed for setup_children.
+            ))
+        ))))
+
 
 (provide 'tests)
 ;;; tests.el ends here

@@ -103,23 +103,25 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
                                                   (push (concat (make-string dotnet-new-extra-line-padding ?\s) current-line) lines))
                                                 (string-join (reverse lines) "\n"))
                                             trimmed))
-                                 (default-pos (search-forward "Default: "))
-                                 (default-line-begin-pos (line-beginning-position))
-                                 (default (buffer-substring-no-properties default-pos (line-end-position))))
+                                 (before-default-pos (point))
+                                 (default-pos (search-forward "Default: " (point-max) t))
+                                 (default-line-begin-pos (when default-pos (line-beginning-position)))
+                                 (default (when default-pos (buffer-substring-no-properties default-pos (line-end-position)))))
+                            (unless default-pos (goto-char before-default-pos))
                             (setf (dotnet-arg-desc current) trimmed)
                             (setf (dotnet-arg-type current) type)
-                            (setf (dotnet-arg-default current) default)
+                            (when default (setf (dotnet-arg-default current) default))
                             (when (string= "choice" type)
                               (goto-char type-pos)
                               (forward-line)
                               (let ((choices '())
                                     (descriptions '()))
-                                (while (< (point) default-line-begin-pos)
+                                (while (and default-line-begin-pos (< (point) default-line-begin-pos))
                                   (re-search-forward "[[:blank:]]+\\([^[:blank:]]+\\)[[:blank:]]+\\(.*\\)")
                                   (unless (> (point) default-line-begin-pos)
                                     (push (match-string 1) choices)
                                     (push (match-string 2) descriptions)))
-                                (goto-char default-pos)
+                                (goto-char (or default-pos before-default-pos))
                                 (setf (dotnet-arg-choices current) choices)
                                 (setf (dotnet-arg-choice-descriptions current) descriptions))))
                           (push current matches)
@@ -172,13 +174,12 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
 
 (defun dotnet-new--update-transient-layout ()
   "Update the transient layout with current template arguments."
-  (let ((selected-info `(:info ,(lambda () (upcase (or dotnet-new--selected "No template selected")))))
-        (template-args (when dotnet-new--current-args
+  (let ((template-args (when dotnet-new--current-args
                          (dotnet-arg--create-transient-args dotnet-new--current-args))))
     (transient-define-prefix dotnet-new-transient ()
       "Transient CLI dispatcher for dotnet new templates."
       ["Selected Template:"
-       selected-info]
+       (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
       ["Common Arguments"
        ("n" "Name" "--name=")
        ("o" "Output" "--output=")
