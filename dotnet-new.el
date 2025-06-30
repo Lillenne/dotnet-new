@@ -153,6 +153,12 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
        `(,(dotnet-arg-arg arg) ,(dotnet-arg-desc arg) ,long-arg)))))
 
 (defun dotnet-arg--create-transient-args (dotnet-args)
+
+  ;; happening in blazorwasm template. TODO look into root cause
+  (setq dotnet-args (cl-remove-duplicates dotnet-args :test
+    (lambda (a b)
+      (or (string= (dotnet-arg-short a) (dotnet-arg-short b))
+          (string= (dotnet-arg-long a) (dotnet-arg-long b))))))
   (dolist (arg dotnet-args)
     (setf (dotnet-arg-arg arg) (dotnet-arg--get-shortcut arg)))
   (dotimes (i (length dotnet-args))
@@ -160,10 +166,18 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
       (let ((ia (nth i dotnet-args))
             (ja (nth j dotnet-args)))
         (unless (eql i j)
-          (while (or (s-contains? (dotnet-arg-arg ia) (dotnet-arg-arg ja))
-                     (s-contains? (dotnet-arg-arg ja) (dotnet-arg-arg ia)))
+          ;; Handle contained arguments by capitalizing the longer one
+          (when (and (not (string= (dotnet-arg-arg ia) (dotnet-arg-arg ja)))
+                     (or (s-contains? (dotnet-arg-arg ia) (dotnet-arg-arg ja))
+                         (s-contains? (dotnet-arg-arg ja) (dotnet-arg-arg ia))))
+            (if (> (length (dotnet-arg-arg ia)) (length (dotnet-arg-arg ja)))
+                (setf (dotnet-arg-arg ia) (concat "-" (capitalize (substring (dotnet-arg-arg ia) 1))))
+              (setf (dotnet-arg-arg ja) (concat "-" (capitalize (substring (dotnet-arg-arg ja) 1))))))
+          ;; Prevent exact matches between arguments
+          (while (string= (dotnet-arg-arg ia) (dotnet-arg-arg ja))
             (let ((l (+ 1 (max (length (dotnet-arg-arg ja)) (length (dotnet-arg-arg ia))))))
-              (setf (dotnet-arg-arg ia) (dotnet-arg--get-shortcut ia l) (dotnet-arg-arg ja) (dotnet-arg--get-shortcut ja l))))))))
+              (setf (dotnet-arg-arg ia) (dotnet-arg--get-shortcut ia l) 
+                    (dotnet-arg-arg ja) (dotnet-arg--get-shortcut ja l))))))))
   (mapcar #'dotnet-arg--create-transient-arg dotnet-args))
 
 (defun dotnet-new--invoke (&optional transient-params)
@@ -172,31 +186,6 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    (list (transient-args 'dotnet-new-transient)))
   (shell-command (shell-quote-argument (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))))
 
-(defun dotnet-new--update-transient-layout ()
-  "Update the transient layout with current template arguments."
-  (let ((template-args (when dotnet-new--current-args
-                         (dotnet-arg--create-transient-args dotnet-new--current-args))))
-    (transient-define-prefix dotnet-new-transient ()
-      "Transient CLI dispatcher for dotnet new templates."
-      ["Selected Template:"
-       (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
-      ["Common Arguments"
-       ("n" "Name" "--name=")
-       ("o" "Output" "--output=")
-       ("d" "Dry run" "--dry-run")
-       ("f" "Force" "--force")
-       ("u" "No update check" "--no-update-check")
-       ("p" "Project" "--project=")
-       ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
-       ("t" "Type" "--type=")]
-      ["Template Arguments"
-       :class transient-column
-       :setup-children (lambda (_) template-args)]
-      ["Actions"
-       ("s" "Select template" dotnet-new--select-template)
-       ("e" "Execute" dotnet-new--invoke)
-       ("q" "Quit" transient-quit-all)])))
-
 (defun dotnet-new--select-template ()
   "Select a new template and update the transient."
   (interactive)
@@ -204,14 +193,13 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
               (selected (completing-read "Which template? " candidates nil t))
               (continue (not (s-blank? selected))))
     (setq dotnet-new--selected selected)
-    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))
-    (dotnet-new--update-transient-layout)
-    (transient-setup 'dotnet-new-transient)))
+    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))))
 
 (transient-define-prefix dotnet-new-transient ()
   "Transient CLI dispatcher for dotnet new templates."
+  :refresh-suffixes t
   ["Selected Template:"
-   (:info "No template selected")]
+   (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
   ["Common Arguments"
    ("n" "Name" "--name=")
    ("o" "Output" "--output=")
@@ -222,9 +210,10 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
    ("t" "Type" "--type=")]
   ["Template Arguments"
-   :class transient-column]
+   :class transient-column
+   :setup-children (lambda (_) (or (dotnet-arg--create-transient-args dotnet-new--current-args) "No template selected"))]
   ["Actions"
-   ("s" "Select template" dotnet-new--select-template)
+   ("s" "Select template" dotnet-new--select-template :transient t)
    ("e" "Execute" dotnet-new--invoke)
    ("q" "Quit" transient-quit-all)])
 
