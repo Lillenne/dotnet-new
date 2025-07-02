@@ -35,11 +35,13 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
   "Get list of dotnet template candidates, with caching."
   (or dotnet-new--candidates-cache
       (setq dotnet-new--candidates-cache
-            (--filter (not (s-blank? it))
-                      (mapcar (lambda (line) (let ((part (nth 1 (split-string line "\\s-\\{2,\\}"))))
-                                               (if (and part (s-contains? "," part))
+            (--filter (and it (not (s-blank? (cdr it))) (not (s-blank? (car it))))
+                      (mapcar (lambda (line) (let* ((split (split-string line "\\s-\\{2,\\}"))
+                                                    (part (nth 1 split))
+                                                    (description (concat (car split) (propertize (concat " (" part ")") 'face 'shadow))))
+                                               (cons description (if (and part (s-contains? "," part))
                                                    (car (s-split "," part))
-                                                 part)))
+                                                 part))))
                               (cddddr (s-lines (shell-command-to-string "dotnet new list"))))))))
 
 (defun dotnet-new--clear-candidates-cache ()
@@ -49,6 +51,7 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
   (message "Dotnet template candidates cache cleared"))
 
 (defun dotnet-new--get-help-command (selected)
+  ;; TODO return buffer, not string
   (when (string-blank-p selected) (error "Selected command is blank!"))
   (let ((help-cmd (shell-command-to-string (concat "dotnet new " selected " --help"))))
     (if (string-blank-p help-cmd)
@@ -130,8 +133,16 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
 (defun dotnet-new--clear-help-cache ()
   "Clear the help cache. Useful when template help might have changed."
   (interactive)
+  (setq dotnet-new--selected nil)
   (clrhash dotnet-new--help-cache)
   (message "Dotnet template help cache cleared"))
+
+(defun dotnet-new-clear-caches ()
+  "Clear both the candidates and help caches."
+  (interactive)
+  (dotnet-new--clear-candidates-cache)
+  (dotnet-new--clear-help-cache)
+  (message "Dotnet new caches cleared"))
 
 (defun dotnet-arg--create-transient-arg (arg &optional padding)
   (when (and (numberp padding) (> padding 0))
@@ -252,16 +263,16 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    (list (transient-args 'dotnet-new-transient)))
   (unless dotnet-new--selected
     (error "No template selected! Please select a template first."))
-  (shell-command (shell-quote-argument (s-concat "dotnet new " dotnet-new--selected " " (s-join " " transient-params)))))
+  (shell-command (shell-quote-argument (s-concat "dotnet new " (cdr dotnet-new--selected) " " (s-join " " transient-params)))))
 
 (defun dotnet-new--select-template ()
   "Select a new template and update the transient."
   (interactive)
   (when-let* ((candidates (dotnet-new--get-candidates))
-              (selected (completing-read "Which template? " candidates nil t))
-              (continue (not (s-blank? selected))))
+              (selected (assoc (completing-read "Which template? " (mapcar #'car candidates) nil t) candidates))
+              (continue (and (cdr selected) (not (s-blank? (cdr selected))))))
     (setq dotnet-new--selected selected)
-    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))
+    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached (cdr dotnet-new--selected)))
     (dotnet-new--update-transient-layout)
     (transient-setup 'dotnet-new-transient)))
 
@@ -271,7 +282,7 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
     "Transient CLI dispatcher for dotnet new templates."
     :refresh-suffixes t
     ["Selected Template:"
-     (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
+     (:info (lambda () (or (car dotnet-new--selected) "No template selected")))]
     ["Common Arguments"
      :pad-keys t
      ("n" "Name" "--name=")
@@ -291,26 +302,15 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
      :pad-keys t
      ("s" "Select template" dotnet-new--select-template)
      ("e" "Execute" dotnet-new--invoke)
+     ("c" "Clear cache" dotnet-new-clear-caches)
      ("q" "Quit" transient-quit-all)]))
-
-(defun dotnet-new--select-template ()
-  "Select a new template and update the transient."
-  (interactive)
-  (when-let* ((candidates (dotnet-new--get-candidates))
-              (selected (completing-read "Which template? " candidates nil t))
-              (continue (not (s-blank? selected))))
-    (setq dotnet-new--selected selected)
-    (setq dotnet-new--current-args (dotnet-new--get-parsed-help-cached selected))
-    (dotnet-new--update-transient-layout)
-    (transient-setup 'dotnet-new-transient)))
-
 
 ;;;###autoload
 (transient-define-prefix dotnet-new-transient ()
   "Transient CLI dispatcher for dotnet new templates."
   :refresh-suffixes t
   ["Selected Template:"
-   (:info (lambda () (upcase (or dotnet-new--selected "No template selected"))))]
+   (:info (lambda () (or (car dotnet-new--selected) "No template selected")))]
   ["Common Arguments"
    :pad-keys t
    ("n" "Name" "--name=")
@@ -327,6 +327,7 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    :pad-keys t
    ("s" "Select template" dotnet-new--select-template :transient t)
    ("e" "Execute" dotnet-new--invoke)
+   ("c" "Clear cache" dotnet-new-clear-caches)
    ("q" "Quit" transient-quit-all)])
 
  ;;;###autoload
