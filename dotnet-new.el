@@ -40,8 +40,8 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
                                                     (part (nth 1 split))
                                                     (description (concat (car split) (propertize (concat " (" part ")") 'face 'shadow))))
                                                (cons description (if (and part (s-contains? "," part))
-                                                   (car (s-split "," part))
-                                                 part))))
+                                                                     (car (s-split "," part))
+                                                                   part))))
                               (cddddr (s-lines (shell-command-to-string "dotnet new list"))))))))
 
 (defun dotnet-new--clear-candidates-cache ()
@@ -142,6 +142,16 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
   (interactive)
   (dotnet-new--clear-candidates-cache)
   (dotnet-new--clear-help-cache)
+  (transient-define-prefix dotnet-new-transient ()
+    "Transient CLI dispatcher for dotnet new templates."
+    :refresh-suffixes t
+    ["Selected Template:"
+     (:info (lambda () (or (car dotnet-new--selected) "No template selected")))]
+    ["Actions"
+     :pad-keys t
+     ("s" "Select template" dotnet-new--select-template :transient t)
+     ("c" "Clear cache" dotnet-new-clear-caches)
+     ("q" "Quit" transient-quit-all)])
   (message "Dotnet new caches cleared"))
 
 (defun dotnet-arg--create-transient-arg (arg &optional padding)
@@ -263,7 +273,7 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    (list (transient-args 'dotnet-new-transient)))
   (unless dotnet-new--selected
     (error "No template selected! Please select a template first."))
-  (shell-command (shell-quote-argument (s-concat "dotnet new " (cdr dotnet-new--selected) " " (s-join " " transient-params)))))
+  (shell-command (s-concat "dotnet new " (shell-quote-argument (cdr dotnet-new--selected)) " " (s-join " " (--map (shell-quote-argument it ) transient-params)))))
 
 (defun dotnet-new--select-template ()
   "Select a new template and update the transient."
@@ -311,23 +321,10 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
   :refresh-suffixes t
   ["Selected Template:"
    (:info (lambda () (or (car dotnet-new--selected) "No template selected")))]
-  ["Common Arguments"
-   :pad-keys t
-   ("n" "Name" "--name=")
-   ("o" "Output" "--output=")
-   ("d" "Dry run" "--dry-run")
-   ("f" "Force" "--force")
-   ("u" "No update check" "--no-update-check")
-   ("p" "Project" "--project=")
-   ("l" "Language" "--language" :choices '("C#" "F#" "VB"))
-   ("t" "Type" "--type=")]
-  ["Template Arguments"
-   :class transient-column]
   ["Actions"
    :pad-keys t
    ("s" "Select template" dotnet-new--select-template :transient t)
-   ("e" "Execute" dotnet-new--invoke)
-   ("c" "Clear cache" dotnet-new-clear-caches)
+   ("c" "Clear cache" dotnet-new-clear-caches :transient t)
    ("q" "Quit" transient-quit-all)])
 
  ;;;###autoload

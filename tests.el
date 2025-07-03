@@ -176,7 +176,6 @@ Template options:
 
 (defun dotnet-new-test-templates (templates)
 (dolist (template templates)
-  (let ((template (cdr template)))
   (condition-case err
       (let* ((_ (message "Testing template: %s" template))
              (help-text (dotnet-new--get-help-command template))
@@ -210,18 +209,18 @@ Template options:
         ;; (should (transient-argument-p targ)) ; not valid due to the way the transient args are created/parsed for setup_children.
         )))
     (error
-     (error "Template '%s' failed: %s" template (error-message-string err)))))))
+     (error "Template '%s' failed: %s" template (error-message-string err))))))
 
 (ert-deftest dotnet-new-test-mock-templates ()
   (cl-letf* (((symbol-function 'dotnet-new--get-candidates)
               #'dotnet-new-test--mock-get-candidates)
              ((symbol-function 'dotnet-new--get-help-command)
               (lambda (template) (dotnet-new-test--mock-get-help template)))
-             (templates (dotnet-new--get-candidates)))
+             (templates (mapcar #'cdr (dotnet-new--get-candidates))))
     (dotnet-new-test-templates templates)))
 
 (ert-deftest dotnet-new-test-all-installed-templates ()
-  (cl-letf* ((templates (dotnet-new--get-candidates)))
+  (cl-letf* ((templates (mapcar #'cdr (dotnet-new--get-candidates))))
     (dotnet-new-test-templates templates)))
 
 
