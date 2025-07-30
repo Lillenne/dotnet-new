@@ -292,7 +292,12 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
     "Transient CLI dispatcher for dotnet new templates."
     :refresh-suffixes t
     ["Selected Template:"
-     (:info (lambda () (or (car dotnet-new--selected) "No template selected")))]
+     (:info (lambda () (or (car dotnet-new--selected) "No template selected")))
+     ;; (:info (lambda () (s-concat "Current command: "
+     ;;                         (propertize "dotnet new " (shell-quote-argument (cdr dotnet-new--selected)) " " (s-join " " (--map (shell-quote-argument it ) (transient-args 'dotnet-new-transient))))
+     ;;                         'face
+     ;;                         'shadow)))
+     ]
     ["Common Arguments"
      :pad-keys t
      ("n" "Name" "--name=")
@@ -327,7 +332,7 @@ Used when arguments descriptions are longer than `dotnet-new-max-chars'.")
    ("c" "Clear cache" dotnet-new-clear-caches :transient t)
    ("q" "Quit" transient-quit-all)])
 
- ;;;###autoload
+;;;###autoload
 (defun dotnet-new-dispatch ()
   "Select a ~dotnet new~ template and invoke a transient interface for it."
   (interactive)
